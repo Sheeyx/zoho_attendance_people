@@ -177,9 +177,9 @@ async function syncDailyAttendance(targetDate) {
 }
 
 // ----------------------------------------------------
-// 3. CRON JOB
+// 3. CRON JOB (Har kuni soat 18:00 UZB vaqti / UTC 13:00 da ishlaydi)
 // ----------------------------------------------------
-cron.schedule('0 2 * * *', async () => {
+cron.schedule('0 13 * * *', async () => {
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   
@@ -259,10 +259,8 @@ app.post('/api/attendance/sync-range', verifyApiKey, async (req, res) => {
 });
 
 // ----------------------------------------------------
-// 6. REPORT ENDPOINTS (Daily, Weekly, Monthly)
+// 6. REPORT & EMPLOYEE ENDPOINTS
 // ----------------------------------------------------
-
-// Helper: Employee filter builder
 function buildEmployeeQuery(department, search) {
   const query = {};
   if (department && department !== 'all') {
@@ -278,12 +276,11 @@ function buildEmployeeQuery(department, search) {
   return query;
 }
 
-// 1. DAILY REPORT ENDPOINT
 app.get('/api/attendance/daily', verifyApiKey, async (req, res) => {
   const { date, department, search, page = 1 } = req.query;
 
   if (!date) {
-    return res.status(400).json({ status: 'error', message: 'Date parametri talab qilinadi (masalan: ?date=01-Sep-2026)' });
+    return res.status(400).json({ status: 'error', message: 'Date parametri talab qilinadi' });
   }
 
   const pageSize = 30;
@@ -292,19 +289,13 @@ app.get('/api/attendance/daily', verifyApiKey, async (req, res) => {
 
   try {
     const empQuery = buildEmployeeQuery(department, search);
-    
-    // Total matching employees count for pagination
     const totalEmployees = await Employee.countDocuments(empQuery);
-    
-    // Fetch paginated employees
     const employees = await Employee.find(empQuery)
       .sort({ name: 1 })
       .skip(skip)
       .limit(pageSize);
 
     const employeeIds = employees.map(e => e._id);
-
-    // Fetch logs for these specific employees on that date
     const logs = await AttendanceLog.find({
       employeeId: { $in: employeeIds },
       date: date
@@ -342,7 +333,6 @@ app.get('/api/attendance/daily', verifyApiKey, async (req, res) => {
   }
 });
 
-// 2. WEEKLY REPORT ENDPOINT (Hamma userlar, har birining o'sha haftadagi barcha kunlik loglari massivda, limit 30)
 app.get('/api/attendance/weekly', verifyApiKey, async (req, res) => {
   const { month = 'Aug', year = '2026', startDay = 1, endDay = 7, department, search, page = 1 } = req.query;
 
@@ -352,7 +342,6 @@ app.get('/api/attendance/weekly', verifyApiKey, async (req, res) => {
 
   try {
     const empQuery = buildEmployeeQuery(department, search);
-
     const totalEmployees = await Employee.countDocuments(empQuery);
     const employees = await Employee.find(empQuery)
       .sort({ name: 1 })
@@ -360,20 +349,16 @@ app.get('/api/attendance/weekly', verifyApiKey, async (req, res) => {
       .limit(pageSize);
 
     const employeeIds = employees.map(e => e._id);
-
-    // Haftalik kunlar ro'yxatini yasaymiz
     const targetDates = [];
     for (let day = parseInt(startDay, 10); day <= parseInt(endDay, 10); day++) {
       targetDates.push(`${String(day).padStart(2, '0')}-${month}-${year}`);
     }
 
-    // Shu xodimlarning haftalik loglarini tortib olamiz
     const logs = await AttendanceLog.find({
       employeeId: { $in: employeeIds },
       date: { $in: targetDates }
     });
 
-    // Har bir xodimga uning kunlik loglarini guruhlaymiz
     const employeeLogsMap = {};
     logs.forEach(log => {
       const empIdStr = log.employeeId.toString();
@@ -409,7 +394,6 @@ app.get('/api/attendance/weekly', verifyApiKey, async (req, res) => {
   }
 });
 
-// 3. MONTHLY REPORT ENDPOINT (Hamma userlar, oylik barcha kunlik loglari massivda, limit 30)
 app.get('/api/attendance/monthly', verifyApiKey, async (req, res) => {
   const { month = 'Aug', year = '2026', department, search, page = 1 } = req.query;
 
@@ -419,7 +403,6 @@ app.get('/api/attendance/monthly', verifyApiKey, async (req, res) => {
 
   try {
     const empQuery = buildEmployeeQuery(department, search);
-
     const totalEmployees = await Employee.countDocuments(empQuery);
     const employees = await Employee.find(empQuery)
       .sort({ name: 1 })
@@ -465,6 +448,47 @@ app.get('/api/attendance/monthly', verifyApiKey, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Monthly report error:', error.message);
+    return res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+// Single employee lookup endpoints
+app.get('/api/employee/:id', verifyApiKey, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const employee = await Employee.findOne({
+      $or: [
+        { _id: mongoose.Types.ObjectId.isValid(id) ? id : null },
+        { employeeId: id },
+        { zohoId: id }
+      ]
+    });
+
+    if (!employee) {
+      return res.status(404).json({ status: 'error', message: 'Employee not found' });
+    }
+
+    return res.json({ status: 'success', data: employee });
+  } catch (error) {
+    console.error('❌ Get single employee error:', error.message);
+    return res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+app.get('/api/employee/search/:name', verifyApiKey, async (req, res) => {
+  const { name } = req.params;
+  try {
+    const employees = await Employee.find({
+      name: { $regex: new RegExp(name, 'i') }
+    });
+
+    if (!employees || employees.length === 0) {
+      return res.status(404).json({ status: 'error', message: 'No employees found with this name' });
+    }
+
+    return res.json({ status: 'success', count: employees.length, data: employees });
+  } catch (error) {
+    console.error('❌ Search employee by name error:', error.message);
     return res.status(500).json({ status: 'error', message: error.message });
   }
 });
