@@ -7,7 +7,7 @@ echo "🚀 Deploy boshlandi..."
 
 # 1. Git'dan eng so'nggi o'zgarishlarni tortib olish (asosiy tarmoq - main)
 echo "📥 Git pull qilinmoqda..."
-git pull origin main
+git pull origin master
 
 # 2. Yangi kutubxonalar bo'lsa o'rnatish
 echo "📦 NPM packages o'rnatilmoqda..."
