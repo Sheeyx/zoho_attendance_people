@@ -4,7 +4,7 @@ import pLimit from 'p-limit';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
 import mongoose from 'mongoose';
-import cors from 'cors'; // <-- CORS kutubxonasi qo'shildi
+import cors from 'cors';
 
 dotenv.config();
 
@@ -341,6 +341,137 @@ app.get('/api/attendance/report', verifyApiKey, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Endpoint xatosi:', error.message);
+    return res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+// ----------------------------------------------------
+// 6. ADVANCED REPORT ENDPOINTS (Monthly & Weekly with Filters)
+// ----------------------------------------------------
+
+async function getFilteredEmployeeIds(department, search) {
+  const employeeQuery = {};
+  
+  if (department && department !== 'all') {
+    employeeQuery.department = { $regex: new RegExp(department, 'i') };
+  }
+  
+  if (search) {
+    employeeQuery.$or = [
+      { name: { $regex: new RegExp(search, 'i') } },
+      { email: { $regex: new RegExp(search, 'i') } },
+      { employeeId: { $regex: new RegExp(search, 'i') } }
+    ];
+  }
+
+  const employees = await Employee.find(employeeQuery).select('_id');
+  return employees.map(emp => emp._id);
+}
+
+// Monthly Report Endpoint (GET)
+app.get('/api/attendance/monthly', verifyApiKey, async (req, res) => {
+  const { month = 'Aug', year = '2026', department, search, page = 1 } = req.query;
+
+  try {
+    const employeeIds = await getFilteredEmployeeIds(department, search);
+    if (employeeIds.length === 0) {
+      return res.json({ status: 'success', pagination: { total_records: 0 }, data: [] });
+    }
+
+    const pageSize = 30;
+    const pageNumber = parseInt(page, 10) > 0 ? parseInt(page, 10) : 1;
+    const skip = (pageNumber - 1) * pageSize;
+
+    const dateRegex = new RegExp(`-${month}-${year}$`, 'i');
+
+    const logQuery = {
+      employeeId: { $in: employeeIds },
+      date: dateRegex
+    };
+
+    const [logs, totalCount] = await Promise.all([
+      AttendanceLog.find(logQuery)
+        .populate('employeeId')
+        .sort({ date: 1 })
+        .skip(skip)
+        .limit(pageSize),
+      AttendanceLog.countDocuments(logQuery)
+    ]);
+
+    return res.json({
+      status: 'success',
+      filter: { month, year, department: department || 'all', search: search || '' },
+      pagination: {
+        total_records: totalCount,
+        per_page: pageSize,
+        current_page: pageNumber,
+        total_pages: Math.ceil(totalCount / pageSize)
+      },
+      data: logs.map(log => ({
+        employee: log.employeeId,
+        date: log.date,
+        entriesCount: log.entries ? log.entries.length : 0,
+        entries: log.entries
+      }))
+    });
+  } catch (error) {
+    console.error('❌ Monthly report xatosi:', error.message);
+    return res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+// Weekly Report Endpoint (GET)
+app.get('/api/attendance/weekly', verifyApiKey, async (req, res) => {
+  const { month = 'Aug', year = '2026', startDay = 3, endDay = 7, department, search, page = 1 } = req.query;
+
+  try {
+    const employeeIds = await getFilteredEmployeeIds(department, search);
+    if (employeeIds.length === 0) {
+      return res.json({ status: 'success', pagination: { total_records: 0 }, data: [] });
+    }
+
+    const targetDates = [];
+    for (let day = parseInt(startDay, 10); day <= parseInt(endDay, 10); day++) {
+      const formattedDay = String(day).padStart(2, '0');
+      targetDates.push(`${formattedDay}-${month}-${year}`);
+    }
+
+    const pageSize = 30;
+    const pageNumber = parseInt(page, 10) > 0 ? parseInt(page, 10) : 1;
+    const skip = (pageNumber - 1) * pageSize;
+
+    const logQuery = {
+      employeeId: { $in: employeeIds },
+      date: { $in: targetDates }
+    };
+
+    const [logs, totalCount] = await Promise.all([
+      AttendanceLog.find(logQuery)
+        .populate('employeeId')
+        .sort({ date: 1 })
+        .skip(skip)
+        .limit(pageSize),
+      AttendanceLog.countDocuments(logQuery)
+    ]);
+
+    return res.json({
+      status: 'success',
+      filter: { startDay, endDay, month, year, department: department || 'all', search: search || '' },
+      pagination: {
+        total_records: totalCount,
+        per_page: pageSize,
+        current_page: pageNumber,
+        total_pages: Math.ceil(totalCount / pageSize)
+      },
+      data: logs.map(log => ({
+        employee: log.employeeId,
+        date: log.date,
+        entriesCount: log.entries ? log.entries.length : 0,
+        entries: log.entries
+      }))
+    });
+  } catch (error) {
+    console.error('❌ Weekly report xatosi:', error.message);
     return res.status(500).json({ status: 'error', message: error.message });
   }
 });
