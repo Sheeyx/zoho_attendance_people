@@ -10,7 +10,6 @@ dotenv.config();
 
 const app = express();
 
-// CORS ni yoqish (barcha domenlardan kelgan so'rovlarga ruxsat beradi)
 app.use(cors());
 app.use(express.json());
 
@@ -44,7 +43,6 @@ mongoose.connect(process.env.DATABASE_URL)
   .then(async () => {
     console.log('📦 MongoDB connected successfully');
 
-    // Startup sync: Fetch yesterday's attendance immediately when app starts
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     
@@ -99,7 +97,7 @@ async function getAccessToken() {
 }
 
 // ----------------------------------------------------
-// 2. SYNC LOGIC (Fetch & Save to Database)
+// 2. SYNC LOGIC
 // ----------------------------------------------------
 async function syncDailyAttendance(targetDate) {
   console.log(`\n🔄 [Sync Started] ${targetDate} uchun ma'lumotlar sinxronizatsiya qilinmoqda...`);
@@ -179,7 +177,7 @@ async function syncDailyAttendance(targetDate) {
 }
 
 // ----------------------------------------------------
-// 3. CRON JOB (Har kuni soat 02:00 da kechagi kunni fetch qiladi)
+// 3. CRON JOB
 // ----------------------------------------------------
 cron.schedule('0 2 * * *', async () => {
   const yesterday = new Date();
@@ -200,7 +198,7 @@ cron.schedule('0 2 * * *', async () => {
 });
 
 // ----------------------------------------------------
-// 4. AUTHENTICATION MIDDLEWARE FOR PRIVATE ENDPOINTS
+// 4. AUTHENTICATION MIDDLEWARE
 // ----------------------------------------------------
 function verifyApiKey(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -219,259 +217,254 @@ function verifyApiKey(req, res, next) {
 }
 
 // ----------------------------------------------------
-// 5. PRIVATE API ENDPOINTS
+// 5. SYNC API ENDPOINTS
 // ----------------------------------------------------
-
-// Single date sync (POST)
 app.post('/api/attendance/sync', verifyApiKey, async (req, res) => {
   const { date } = req.body;
   if (!date) {
-    return res.status(400).json({ status: 'error', message: 'Body da "date" ko\'rsatilishi shart (masalan: 01-Sep-2026)' });
+    return res.status(400).json({ status: 'error', message: 'Body da "date" ko\'rsatilishi shart' });
   }
 
   try {
     await syncDailyAttendance(date);
-    return res.json({ status: 'success', message: `${date} uchun ma'lumotlar muvaffaqiyatli sinxronizatsiya qilindi.` });
+    return res.json({ status: 'success', message: `${date} uchun sinxronizatsiya qilindi.` });
   } catch (error) {
     return res.status(500).json({ status: 'error', message: error.message });
   }
 });
 
-// Full August Sync (POST)
 app.post('/api/attendance/sync-august', verifyApiKey, async (req, res) => {
   try {
-    const year = 2026;
-    const daysInAugust = 31;
-
-    console.log(`\n🚀 [August Sync Started] 2026-yil Avgust oyi uchun to'liq sinxronizatsiya boshlandi...`);
-
-    for (let day = 1; day <= daysInAugust; day++) {
-      const formattedDay = String(day).padStart(2, '0');
-      const targetDate = `${formattedDay}-Aug-${year}`;
-      
-      try {
-        await syncDailyAttendance(targetDate);
-      } catch (dayErr) {
-        console.error(`⚠️ ${targetDate} uchun xatolik:`, dayErr.message);
-      }
+    for (let day = 1; day <= 31; day++) {
+      const targetDate = `${String(day).padStart(2, '0')}-Aug-2026`;
+      await syncDailyAttendance(targetDate);
     }
-
-    console.log(`✨ [August Sync Finished] Avgust oyi to'liq bazaga yuklandi!`);
-    return res.json({ 
-      status: 'success', 
-      message: 'Avgust oyi uchun barcha davomat maʼlumotlari muvaffaqiyatli sinxronizatsiya qilindi.' 
-    });
+    return res.json({ status: 'success', message: 'Avgust oyi to\'liq sinxronizatsiya qilindi.' });
   } catch (error) {
-    console.error('❌ August sync xatosi:', error.message);
     return res.status(500).json({ status: 'error', message: error.message });
   }
 });
 
-// Range Sync (POST) - masalan: 3-dan 7-gacha
 app.post('/api/attendance/sync-range', verifyApiKey, async (req, res) => {
   const { startDay = 3, endDay = 7 } = req.body;
-
   try {
-    const year = 2026;
-    const month = 'Aug';
-
-    console.log(`\n🚀 [Range Sync Started] ${startDay}-${month}-${year} dan ${endDay}-${month}-${year} gacha sinxronizatsiya boshlandi...`);
-
     for (let day = startDay; day <= endDay; day++) {
-      const formattedDay = String(day).padStart(2, '0');
-      const targetDate = `${formattedDay}-${month}-${year}`;
-      
-      try {
-        await syncDailyAttendance(targetDate);
-      } catch (dayErr) {
-        console.error(`⚠️ ${targetDate} uchun xatolik:`, dayErr.message);
-      }
+      const targetDate = `${String(day).padStart(2, '0')}-Aug-2026`;
+      await syncDailyAttendance(targetDate);
     }
-
-    console.log(`✨ [Range Sync Finished] Belgilangan kunlar oralig'i bazaga yuklandi!`);
-    return res.json({ 
-      status: 'success', 
-      message: `${startDay}-Aug dan ${endDay}-Aug gacha bo'lgan davomat ma'lumotlari muvaffaqiyatli sinxronizatsiya qilindi.` 
-    });
+    return res.json({ status: 'success', message: 'Oraliq sinxronizatsiya qilindi.' });
   } catch (error) {
-    console.error('❌ Range sync xatosi:', error.message);
-    return res.status(500).json({ status: 'error', message: error.message });
-  }
-});
-
-// Get attendance report (GET)
-app.get('/api/attendance/report', verifyApiKey, async (req, res) => {
-  const { date, page = 1 } = req.query;
-
-  if (!date) {
-    return res.status(400).json({ 
-      status: 'error', 
-      message: 'Date parametri talab qilinadi (masalan: ?date=01-Sep-2026&page=1)' 
-    });
-  }
-
-  const pageSize = 30;
-  const pageNumber = parseInt(page, 10) > 0 ? parseInt(page, 10) : 1;
-  const skip = (pageNumber - 1) * pageSize;
-
-  try {
-    const [logs, totalCount] = await Promise.all([
-      AttendanceLog.find({ date: date })
-        .populate('employeeId')
-        .skip(skip)
-        .limit(pageSize),
-      AttendanceLog.countDocuments({ date: date })
-    ]);
-
-    return res.json({
-      status: 'success',
-      date: date,
-      pagination: {
-        total_records: totalCount,
-        per_page: pageSize,
-        current_page: pageNumber,
-        total_pages: Math.ceil(totalCount / pageSize)
-      },
-      data: logs.map(log => ({
-        employee: log.employeeId,
-        date: log.date,
-        entriesCount: log.entries ? log.entries.length : 0,
-        entries: log.entries
-      }))
-    });
-  } catch (error) {
-    console.error('❌ Endpoint xatosi:', error.message);
     return res.status(500).json({ status: 'error', message: error.message });
   }
 });
 
 // ----------------------------------------------------
-// 6. ADVANCED REPORT ENDPOINTS (Monthly & Weekly with Filters)
+// 6. REPORT ENDPOINTS (Daily, Weekly, Monthly)
 // ----------------------------------------------------
 
-async function getFilteredEmployeeIds(department, search) {
-  const employeeQuery = {};
-  
+// Helper: Employee filter builder
+function buildEmployeeQuery(department, search) {
+  const query = {};
   if (department && department !== 'all') {
-    employeeQuery.department = { $regex: new RegExp(department, 'i') };
+    query.department = { $regex: new RegExp(`^${department}$`, 'i') };
   }
-  
   if (search) {
-    employeeQuery.$or = [
+    query.$or = [
       { name: { $regex: new RegExp(search, 'i') } },
       { email: { $regex: new RegExp(search, 'i') } },
       { employeeId: { $regex: new RegExp(search, 'i') } }
     ];
   }
-
-  const employees = await Employee.find(employeeQuery).select('_id');
-  return employees.map(emp => emp._id);
+  return query;
 }
 
-// Monthly Report Endpoint (GET)
-app.get('/api/attendance/monthly', verifyApiKey, async (req, res) => {
-  const { month = 'Aug', year = '2026', department, search, page = 1 } = req.query;
+// 1. DAILY REPORT ENDPOINT
+app.get('/api/attendance/daily', verifyApiKey, async (req, res) => {
+  const { date, department, search, page = 1 } = req.query;
+
+  if (!date) {
+    return res.status(400).json({ status: 'error', message: 'Date parametri talab qilinadi (masalan: ?date=01-Sep-2026)' });
+  }
+
+  const pageSize = 30;
+  const pageNumber = Math.max(1, parseInt(page, 10));
+  const skip = (pageNumber - 1) * pageSize;
 
   try {
-    const employeeIds = await getFilteredEmployeeIds(department, search);
-    if (employeeIds.length === 0) {
-      return res.json({ status: 'success', pagination: { total_records: 0 }, data: [] });
-    }
+    const empQuery = buildEmployeeQuery(department, search);
+    
+    // Total matching employees count for pagination
+    const totalEmployees = await Employee.countDocuments(empQuery);
+    
+    // Fetch paginated employees
+    const employees = await Employee.find(empQuery)
+      .sort({ name: 1 })
+      .skip(skip)
+      .limit(pageSize);
 
-    const pageSize = 30;
-    const pageNumber = parseInt(page, 10) > 0 ? parseInt(page, 10) : 1;
-    const skip = (pageNumber - 1) * pageSize;
+    const employeeIds = employees.map(e => e._id);
 
-    const dateRegex = new RegExp(`-${month}-${year}$`, 'i');
-
-    const logQuery = {
+    // Fetch logs for these specific employees on that date
+    const logs = await AttendanceLog.find({
       employeeId: { $in: employeeIds },
-      date: dateRegex
-    };
+      date: date
+    });
 
-    const [logs, totalCount] = await Promise.all([
-      AttendanceLog.find(logQuery)
-        .populate('employeeId')
-        .sort({ date: 1 })
-        .skip(skip)
-        .limit(pageSize),
-      AttendanceLog.countDocuments(logQuery)
-    ]);
+    const logMap = {};
+    logs.forEach(log => {
+      logMap[log.employeeId.toString()] = log;
+    });
+
+    const data = employees.map(emp => {
+      const log = logMap[emp._id.toString()];
+      return {
+        employee: emp,
+        date: date,
+        entriesCount: log ? log.entries.length : 0,
+        entries: log ? log.entries : []
+      };
+    });
 
     return res.json({
       status: 'success',
-      filter: { month, year, department: department || 'all', search: search || '' },
+      date,
       pagination: {
-        total_records: totalCount,
+        total_records: totalEmployees,
         per_page: pageSize,
         current_page: pageNumber,
-        total_pages: Math.ceil(totalCount / pageSize)
+        total_pages: Math.ceil(totalEmployees / pageSize)
       },
-      data: logs.map(log => ({
-        employee: log.employeeId,
-        date: log.date,
-        entriesCount: log.entries ? log.entries.length : 0,
-        entries: log.entries
-      }))
+      data
     });
   } catch (error) {
-    console.error('❌ Monthly report xatosi:', error.message);
+    console.error('❌ Daily report error:', error.message);
     return res.status(500).json({ status: 'error', message: error.message });
   }
 });
 
-// Weekly Report Endpoint (GET)
+// 2. WEEKLY REPORT ENDPOINT (Hamma userlar, har birining o'sha haftadagi barcha kunlik loglari massivda, limit 30)
 app.get('/api/attendance/weekly', verifyApiKey, async (req, res) => {
-  const { month = 'Aug', year = '2026', startDay = 3, endDay = 7, department, search, page = 1 } = req.query;
+  const { month = 'Aug', year = '2026', startDay = 1, endDay = 7, department, search, page = 1 } = req.query;
+
+  const pageSize = 30;
+  const pageNumber = Math.max(1, parseInt(page, 10));
+  const skip = (pageNumber - 1) * pageSize;
 
   try {
-    const employeeIds = await getFilteredEmployeeIds(department, search);
-    if (employeeIds.length === 0) {
-      return res.json({ status: 'success', pagination: { total_records: 0 }, data: [] });
-    }
+    const empQuery = buildEmployeeQuery(department, search);
 
+    const totalEmployees = await Employee.countDocuments(empQuery);
+    const employees = await Employee.find(empQuery)
+      .sort({ name: 1 })
+      .skip(skip)
+      .limit(pageSize);
+
+    const employeeIds = employees.map(e => e._id);
+
+    // Haftalik kunlar ro'yxatini yasaymiz
     const targetDates = [];
     for (let day = parseInt(startDay, 10); day <= parseInt(endDay, 10); day++) {
-      const formattedDay = String(day).padStart(2, '0');
-      targetDates.push(`${formattedDay}-${month}-${year}`);
+      targetDates.push(`${String(day).padStart(2, '0')}-${month}-${year}`);
     }
 
-    const pageSize = 30;
-    const pageNumber = parseInt(page, 10) > 0 ? parseInt(page, 10) : 1;
-    const skip = (pageNumber - 1) * pageSize;
-
-    const logQuery = {
+    // Shu xodimlarning haftalik loglarini tortib olamiz
+    const logs = await AttendanceLog.find({
       employeeId: { $in: employeeIds },
       date: { $in: targetDates }
-    };
+    });
 
-    const [logs, totalCount] = await Promise.all([
-      AttendanceLog.find(logQuery)
-        .populate('employeeId')
-        .sort({ date: 1 })
-        .skip(skip)
-        .limit(pageSize),
-      AttendanceLog.countDocuments(logQuery)
-    ]);
+    // Har bir xodimga uning kunlik loglarini guruhlaymiz
+    const employeeLogsMap = {};
+    logs.forEach(log => {
+      const empIdStr = log.employeeId.toString();
+      if (!employeeLogsMap[empIdStr]) {
+        employeeLogsMap[empIdStr] = [];
+      }
+      employeeLogsMap[empIdStr].push({
+        date: log.date,
+        entriesCount: log.entries.length,
+        entries: log.entries
+      });
+    });
+
+    const data = employees.map(emp => ({
+      employee: emp,
+      attendance: employeeLogsMap[emp._id.toString()] || []
+    }));
 
     return res.json({
       status: 'success',
       filter: { startDay, endDay, month, year, department: department || 'all', search: search || '' },
       pagination: {
-        total_records: totalCount,
+        total_records: totalEmployees,
         per_page: pageSize,
         current_page: pageNumber,
-        total_pages: Math.ceil(totalCount / pageSize)
+        total_pages: Math.ceil(totalEmployees / pageSize)
       },
-      data: logs.map(log => ({
-        employee: log.employeeId,
-        date: log.date,
-        entriesCount: log.entries ? log.entries.length : 0,
-        entries: log.entries
-      }))
+      data
     });
   } catch (error) {
-    console.error('❌ Weekly report xatosi:', error.message);
+    console.error('❌ Weekly report error:', error.message);
+    return res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+// 3. MONTHLY REPORT ENDPOINT (Hamma userlar, oylik barcha kunlik loglari massivda, limit 30)
+app.get('/api/attendance/monthly', verifyApiKey, async (req, res) => {
+  const { month = 'Aug', year = '2026', department, search, page = 1 } = req.query;
+
+  const pageSize = 30;
+  const pageNumber = Math.max(1, parseInt(page, 10));
+  const skip = (pageNumber - 1) * pageSize;
+
+  try {
+    const empQuery = buildEmployeeQuery(department, search);
+
+    const totalEmployees = await Employee.countDocuments(empQuery);
+    const employees = await Employee.find(empQuery)
+      .sort({ name: 1 })
+      .skip(skip)
+      .limit(pageSize);
+
+    const employeeIds = employees.map(e => e._id);
+    const dateRegex = new RegExp(`-${month}-${year}$`, 'i');
+
+    const logs = await AttendanceLog.find({
+      employeeId: { $in: employeeIds },
+      date: dateRegex
+    });
+
+    const employeeLogsMap = {};
+    logs.forEach(log => {
+      const empIdStr = log.employeeId.toString();
+      if (!employeeLogsMap[empIdStr]) {
+        employeeLogsMap[empIdStr] = [];
+      }
+      employeeLogsMap[empIdStr].push({
+        date: log.date,
+        entriesCount: log.entries.length,
+        entries: log.entries
+      });
+    });
+
+    const data = employees.map(emp => ({
+      employee: emp,
+      attendance: employeeLogsMap[emp._id.toString()] || []
+    }));
+
+    return res.json({
+      status: 'success',
+      filter: { month, year, department: department || 'all', search: search || '' },
+      pagination: {
+        total_records: totalEmployees,
+        per_page: pageSize,
+        current_page: pageNumber,
+        total_pages: Math.ceil(totalEmployees / pageSize)
+      },
+      data
+    });
+  } catch (error) {
+    console.error('❌ Monthly report error:', error.message);
     return res.status(500).json({ status: 'error', message: error.message });
   }
 });
