@@ -4,10 +4,14 @@ import pLimit from 'p-limit';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
 import mongoose from 'mongoose';
+import cors from 'cors'; // <-- CORS kutubxonasi qo'shildi
 
 dotenv.config();
 
 const app = express();
+
+// CORS ni yoqish (barcha domenlardan kelgan so'rovlarga ruxsat beradi)
+app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
